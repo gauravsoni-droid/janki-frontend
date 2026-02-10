@@ -31,6 +31,7 @@ export default function ViewDocumentsPage() {
     try {
       setLoading(true);
       setError(null);
+
       const currentOffset = append ? offset : 0;
       const response = await apiClient.getDocuments(
         knowledgeScope,
@@ -46,44 +47,29 @@ export default function ViewDocumentsPage() {
         setDocuments(fetchedDocs);
         setOffset(fetchedDocs.length);
       }
+
       setTotal(response.total || 0);
+
       // Check if there are more documents to load
       const currentCount = append
         ? documents.length + fetchedDocs.length
         : fetchedDocs.length;
       setHasMore(currentCount < (response.total || 0));
 
-      // Check status for each document
+      // For the view-documents page we don't need fine‑grained upload state.
+      // Treat all fetched documents as "uploaded" so the status column is
+      // always green and we avoid extra status API calls (which can 404 for
+      // bucket‑only documents).
       for (const doc of fetchedDocs) {
-        try {
-          const status = await apiClient.checkDocumentStatus(doc.id);
-          if (
-            status.available &&
-            status.exists_in_storage &&
-            status.exists_in_db
-          ) {
-            setDocumentStatuses((prev) => ({
-              ...prev,
-              [doc.id]: "uploaded",
-            }));
-          } else {
-            setDocumentStatuses((prev) => ({
-              ...prev,
-              [doc.id]: "uploading",
-            }));
-          }
-        } catch (err) {
-          console.error(`Error checking status for document ${doc.id}:`, err);
-          // Default to uploading on error
-          setDocumentStatuses((prev) => ({
-            ...prev,
-            [doc.id]: "uploading",
-          }));
-        }
+        setDocumentStatuses((prev) => ({
+          ...prev,
+          [doc.id]: "uploaded",
+        }));
       }
     } catch (err: any) {
       console.error("Error fetching documents:", err);
       setError(err?.message || "Failed to load documents.");
+
       if (!append) {
         setDocuments([]);
         setOffset(0);
