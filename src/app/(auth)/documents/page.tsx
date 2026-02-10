@@ -17,7 +17,81 @@ export default function ViewDocumentsPage() {
   const [loading, setLoading] = useState(false);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const limit = 100;
+  const [documentStatuses, setDocumentStatuses] = useState<
+    Record<string, "uploading" | "uploaded">
+  >({});
+
+  // Shared loader for documents so it can be used both on initial load and
+  // from the "Load More" button.
+  const fetchDocuments = async (append = false) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const currentOffset = append ? offset : 0;
+      const response = await apiClient.getDocuments(
+        knowledgeScope,
+        limit,
+        currentOffset,
+      );
+      const fetchedDocs = response.documents || [];
+
+      if (append) {
+        setDocuments((prev) => [...prev, ...fetchedDocs]);
+        setOffset((prev) => prev + fetchedDocs.length);
+      } else {
+        setDocuments(fetchedDocs);
+        setOffset(fetchedDocs.length);
+      }
+      setTotal(response.total || 0);
+      // Check if there are more documents to load
+      const currentCount = append
+        ? documents.length + fetchedDocs.length
+        : fetchedDocs.length;
+      setHasMore(currentCount < (response.total || 0));
+
+      // Check status for each document
+      for (const doc of fetchedDocs) {
+        try {
+          const status = await apiClient.checkDocumentStatus(doc.id);
+          if (
+            status.available &&
+            status.exists_in_storage &&
+            status.exists_in_db
+          ) {
+            setDocumentStatuses((prev) => ({
+              ...prev,
+              [doc.id]: "uploaded",
+            }));
+          } else {
+            setDocumentStatuses((prev) => ({
+              ...prev,
+              [doc.id]: "uploading",
+            }));
+          }
+        } catch (err) {
+          console.error(`Error checking status for document ${doc.id}:`, err);
+          // Default to uploading on error
+          setDocumentStatuses((prev) => ({
+            ...prev,
+            [doc.id]: "uploading",
+          }));
+        }
+      }
+    } catch (err: any) {
+      console.error("Error fetching documents:", err);
+      setError(err?.message || "Failed to load documents.");
+      if (!append) {
+        setDocuments([]);
+        setOffset(0);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -26,34 +100,14 @@ export default function ViewDocumentsPage() {
     }
 
     if (status === "authenticated") {
-      let cancelled = false;
-      const fetchDocuments = async () => {
-        try {
-          setLoading(true);
-          setError(null);
-          const response = await apiClient.getDocuments(knowledgeScope);
-          if (!cancelled) {
-            setDocuments(response.documents || []);
-          }
-        } catch (err: any) {
-          console.error("Error fetching documents:", err);
-          if (!cancelled) {
-            setError(err?.message || "Failed to load documents.");
-            setDocuments([]);
-          }
-        } finally {
-          if (!cancelled) {
-            setLoading(false);
-          }
-        }
-      };
-
       fetchDocuments();
-      return () => {
-        cancelled = true;
-      };
     }
   }, [knowledgeScope, status, router]);
+
+  // Reset offset when scope changes
+  useEffect(() => {
+    setOffset(0);
+  }, [knowledgeScope]);
 
   if (status === "loading") {
     return (
@@ -122,16 +176,13 @@ export default function ViewDocumentsPage() {
                     Filename
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Type
+                    Category
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Size
+                    Status
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Scope
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Uploaded At
+                    Created Date
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
                     Actions
@@ -139,58 +190,83 @@ export default function ViewDocumentsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 text-sm">
-                {documents.map((doc) => (
-                  <tr key={doc.id}>
-                    <td className="px-4 py-3 text-gray-900 break-all">
-                      {doc.filename}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {doc.file_type || "Unknown"}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {doc.file_size ? `${(doc.file_size / 1024).toFixed(1)} KB` : "—"}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {doc.is_company_doc ? "Company" : "My"}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {doc.uploaded_at
-                        ? new Date(doc.uploaded_at).toLocaleString()
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={async (e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          
-                          const confirmed = window.confirm(`Are you sure you want to delete "${doc.filename}"?`);
-                          if (!confirmed) {
-                            return;
-                          }
-                          
-                          try {
-                            setDeletingId(doc.id);
-                            setError(null);
-                            await apiClient.deleteDocument(doc.id);
-                            setDocuments(documents.filter((d) => d.id !== doc.id));
-                          } catch (err: any) {
-                            setError(err?.message || "Failed to delete document.");
-                          } finally {
-                            setDeletingId(null);
-                          }
-                        }}
-                        disabled={deletingId === doc.id}
-                        className="text-red-600 hover:text-red-800 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {deletingId === doc.id ? "Deleting..." : "Delete"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {documents.map((doc) => {
+                  const status = documentStatuses[doc.id] || 'uploaded'; // Default to uploaded if not tracked
+                  
+                  return (
+                    <tr key={doc.id}>
+                      <td className="px-4 py-3 text-gray-900 break-all">
+                        {doc.filename}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500">
+                        {doc.category || "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        {status === 'uploading' ? (
+                          <span className="text-xs text-gray-600">Uploading</span>
+                        ) : status === 'uploaded' ? (
+                          <span className="text-xs text-green-600">Uploaded</span>
+                        ) : status === 'deleting' ? (
+                          <span className="text-xs text-red-600">Deleting</span>
+                        ) : status === 'deleted' ? (
+                          <span className="text-xs text-gray-500">Deleted</span>
+                        ) : (
+                          <span className="text-xs text-green-600">Uploaded</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500">
+                        {doc.uploaded_at
+                          ? new Date(doc.uploaded_at).toLocaleString()
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            try {
+                              setError(null);
+                              const response = await apiClient.getDocumentViewUrl(
+                                doc.id
+                              );
+                              // Open the signed URL in a new tab
+                              window.open(response.url, "_blank");
+                            } catch (err: any) {
+                              console.error("Error getting view URL:", err);
+                              setError(
+                                err?.message ||
+                                  "Failed to open document. Please try again."
+                              );
+                            }
+                          }}
+                          className="text-blue-600 hover:text-blue-800 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+            {hasMore && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => fetchDocuments(true)}
+                  disabled={loading}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                >
+                  {loading ? "Loading..." : "Load More"}
+                </button>
+              </div>
+            )}
+            {total > 0 && (
+              <div className="mt-2 text-center text-xs text-gray-500">
+                Showing {documents.length} of {total} documents
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -9,6 +9,9 @@ import type {
   ApiError,
   Document,
   DocumentListResponse,
+  ConversationListResponse,
+  Conversation,
+  ChatMessage,
 } from "@/types";
 
 class ApiClient {
@@ -78,27 +81,6 @@ class ApiClient {
       // Axios default "application/json" header was causing FormData to be serialized as JSON
       if (config.data instanceof FormData) {
         delete config.headers["Content-Type"];
-        // #region agent log
-        fetch(
-          "http://127.0.0.1:7242/ingest/fa958d08-04cf-412f-8e65-265079308f96",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              sessionId: "debug-session",
-              runId: "post-fix",
-              hypothesisId: "H1",
-              location: "api-client.ts:request_interceptor:formdata_fix",
-              message: "Removed Content-Type header for FormData",
-              data: {
-                isFormData: true,
-                contentTypeRemoved: true,
-              },
-              timestamp: Date.now(),
-            }),
-          },
-        ).catch(() => {});
-        // #endregion
       }
 
       // Ensure GET/HEAD requests never have a body
@@ -192,73 +174,39 @@ class ApiClient {
   }
 
   // Documents
-  async getDocuments(scope: KnowledgeScope): Promise<DocumentListResponse> {
+  async getDocuments(
+    scope: KnowledgeScope,
+    limit?: number,
+    offset?: number,
+  ): Promise<DocumentListResponse> {
+    const params: any = { scope };
+    if (limit !== undefined) params.limit = limit;
+    if (offset !== undefined) params.offset = offset;
     const response = await this.client.get<DocumentListResponse>(
       `/api/v1/documents`,
-      {
-        params: { scope },
-      },
+      { params },
     );
     return response.data;
   }
 
-  async uploadDocument(file: File, isCompanyDoc: boolean): Promise<Document> {
+  async uploadDocument(
+    file: File,
+    isCompanyDoc: boolean,
+    category: string,
+    customCategory?: string,
+  ): Promise<Document> {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("is_company_doc", String(isCompanyDoc));
-
-    // #region agent log
-    // Debug log: document upload request details (hypotheses H1-H4)
-    fetch("http://127.0.0.1:7242/ingest/fa958d08-04cf-412f-8e65-265079308f96", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "debug-session",
-        runId: "pre-fix",
-        hypothesisId: "H1-H4",
-        location: "api-client.ts:uploadDocument:before_request",
-        message: "UploadDocument request preparation",
-        data: {
-          baseURL: this.client.defaults.baseURL,
-          path: "/api/v1/documents",
-          isCompanyDoc,
-          isCompanyDocType: typeof isCompanyDoc,
-          isCompanyDocString: String(isCompanyDoc),
-          fileName: file?.name,
-          fileSize: file?.size,
-          fileType: file?.type,
-          formDataHasFile: formData.has("file"),
-          formDataHasIsCompanyDoc: formData.has("is_company_doc"),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
+    formData.append("category", category);
+    if (customCategory) {
+      formData.append("custom_category", customCategory);
+    }
 
     // NOTE:
     // Do NOT set the Content-Type header manually for multipart/form-data.
     // Let the browser/XHR set the correct boundary; otherwise FastAPI cannot
     // parse the upload and the menu appears "not working".
-
-    // #region agent log
-    // Debug log: about to send request (hypotheses H1-H4)
-    fetch("http://127.0.0.1:7242/ingest/fa958d08-04cf-412f-8e65-265079308f96", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "debug-session",
-        runId: "pre-fix",
-        hypothesisId: "H1-H4",
-        location: "api-client.ts:uploadDocument:about_to_send",
-        message: "About to send POST request",
-        data: {
-          url: `${this.client.defaults.baseURL}/api/v1/documents`,
-          hasAuthHeader: !!this.client.defaults.headers.common["Authorization"],
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
 
     try {
       const response = await this.client.post<Document>(
@@ -266,63 +214,51 @@ class ApiClient {
         formData,
       );
 
-      // #region agent log
-      // Debug log: successful response (hypotheses H1-H4)
-      fetch(
-        "http://127.0.0.1:7242/ingest/fa958d08-04cf-412f-8e65-265079308f96",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId: "debug-session",
-            runId: "pre-fix",
-            hypothesisId: "H1-H4",
-            location: "api-client.ts:uploadDocument:success",
-            message: "Upload successful",
-            data: {
-              status: response.status,
-              hasData: !!response.data,
-            },
-            timestamp: Date.now(),
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
-
       return response.data;
     } catch (error: any) {
-      // #region agent log
-      // Debug log: error response (hypotheses H1-H4)
-      fetch(
-        "http://127.0.0.1:7242/ingest/fa958d08-04cf-412f-8e65-265079308f96",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId: "debug-session",
-            runId: "pre-fix",
-            hypothesisId: "H1-H4",
-            location: "api-client.ts:uploadDocument:error",
-            message: "Upload error caught",
-            data: {
-              errorMessage: error?.message,
-              errorStatus: error?.response?.status,
-              errorStatusText: error?.response?.statusText,
-              errorData: error?.response?.data,
-              hasResponse: !!error?.response,
-            },
-            timestamp: Date.now(),
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
-
       throw error;
     }
   }
 
+  async createDocument(params: {
+    title: string;
+    category: string;
+    custom_category?: string;
+    content: string;
+    is_company_doc?: boolean;
+  }): Promise<Document> {
+    const payload = {
+      title: params.title,
+      category: params.category,
+      custom_category: params.custom_category,
+      content: params.content,
+      is_company_doc: params.is_company_doc ?? false,
+    };
+
+    const response = await this.client.post<Document>(
+      `/api/v1/documents/create`,
+      payload,
+    );
+
+    return response.data;
+  }
+
   async deleteDocument(documentId: string): Promise<void> {
     await this.client.delete(`/api/v1/documents/${documentId}`);
+  }
+
+  async getDocumentViewUrl(documentId: string): Promise<{ url: string; expires_in: number }> {
+    const response = await this.client.get<{ url: string; expires_in: number }>(
+      `/api/v1/documents/${documentId}/view-url`,
+    );
+    return response.data;
+  }
+
+  async checkDocumentStatus(documentId: string): Promise<{ available: boolean; exists_in_storage: boolean; exists_in_db: boolean }> {
+    const response = await this.client.get<{ available: boolean; exists_in_storage: boolean; exists_in_db: boolean }>(
+      `/api/v1/documents/${documentId}/status`,
+    );
+    return response.data;
   }
 
   // Chat
@@ -337,6 +273,37 @@ class ApiClient {
       scope,
     });
     return response.data;
+  }
+
+  async getConversations(): Promise<ConversationListResponse> {
+    const response = await this.client.get<ConversationListResponse>(
+      "/api/v1/chat/sessions",
+    );
+    return response.data;
+  }
+
+  async getConversationMessages(
+    sessionId: string,
+  ): Promise<ChatMessage[]> {
+    const response = await this.client.get<ChatMessage[]>(
+      `/api/v1/chat/sessions/${sessionId}/messages`,
+    );
+    return response.data;
+  }
+
+  async updateConversation(
+    sessionId: string,
+    payload: { title?: string; is_pinned?: boolean },
+  ): Promise<Conversation> {
+    const response = await this.client.patch<Conversation>(
+      `/api/v1/chat/sessions/${sessionId}`,
+      payload,
+    );
+    return response.data;
+  }
+
+  async deleteConversation(sessionId: string): Promise<void> {
+    await this.client.delete(`/api/v1/chat/sessions/${sessionId}`);
   }
 }
 

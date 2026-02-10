@@ -22,6 +22,7 @@ export interface Document {
   user_id: string;
   is_company_doc: boolean;
   uploaded_at: string;
+  category?: string;
 }
 
 export interface Conversation {
@@ -32,6 +33,7 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
   message_preview?: string;
+  is_pinned?: boolean;
 }
 
 export interface ChatMessage {
@@ -39,13 +41,14 @@ export interface ChatMessage {
   conversation_id: string;
   role: MessageRole;
   content: string;
-  sources?: string[];
+  sources?: DocumentSource[];
   created_at: string;
 }
 
 export interface DocumentSource {
-  id: string;
-  filename: string;
+  document_id: string;
+  title: string;
+  author?: string;
 }
 
 export interface ChatResponse {
